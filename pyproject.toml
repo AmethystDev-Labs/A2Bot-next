@@ -41,7 +41,8 @@ dependencies = [
     "httpx>=0.28.1",
     "fastapi>=0.128.0",
     "curl-cffi>=0.13.0",
-    "nonebot-plugin-apscheduler>=0.5.0",
+    "pillow>=11.0.0",
+    "nonebot-plugin-localstore>=0.7.4",
 ]
 
 [tool.nonebot]
@@ -56,4 +57,4 @@ nonebot-adapter-onebot = [
 
 [tool.nonebot.plugins]
 "@local" = []
-nonebot-plugin-apscheduler = ["nonebot_plugin_apscheduler"]
+nonebot-plugin-localstore = ["nonebot_plugin_localstore"]
