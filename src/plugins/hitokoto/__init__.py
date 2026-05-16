@@ -1,7 +1,8 @@
 from nonebot import on_notice
-from nonebot.adapters.onebot.v11 import Bot
+from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 from nonebot.adapters.onebot.v11.event import PokeNotifyEvent
 import httpx
+from .render import render_template_to_png
 
 poke_handler = on_notice()
 
@@ -18,3 +19,5 @@ async def handle_poke(bot: Bot, event: PokeNotifyEvent):
             hitokoto_result = await client.get("https://hitokoto.c0ffee.space/")
             hitokoto_result = hitokoto_result.json()
             await bot.send(event, message=f"『{hitokoto_result.get('hitokoto', '获取失败')}』 -- {hitokoto_result.get('from', '未知')}")
+            image = await render_template_to_png(hitokoto_result.get('hitokoto', '获取失败'), hitokoto_result.get('from', '未知'))
+            await bot.send(event, message=MessageSegment.image(image))

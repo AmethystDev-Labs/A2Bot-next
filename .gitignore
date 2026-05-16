@@ -8,3 +8,4 @@ data/
 
 *.log
 ecosystem.config.js
+output.b64

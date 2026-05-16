@@ -43,6 +43,7 @@ dependencies = [
     "curl-cffi>=0.13.0",
     "pillow>=11.0.0",
     "nonebot-plugin-localstore>=0.7.4",
+    "playwright>=1.59.0",
 ]
 
 [tool.nonebot]
