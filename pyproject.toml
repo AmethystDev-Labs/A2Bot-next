@@ -3,7 +3,7 @@ name = "A2Bot-next"
 version = "0.1.0"
 description = "A2Bot-next"
 readme = "README.md"
-requires-python = ">=3.9, <4.0"
+requires-python = ">=3.12, <4.0"
 dependencies = [
     "nonebot2[fastapi,httpx,websockets]>=2.4.4",
     "nonebot-adapter-onebot>=2.4.6",
