@@ -92,7 +92,7 @@ def add_watch(
     item["kind"] = kind
     if types is not None:
         item["types"] = list(types)
-    groups = list(item.get("groups") or [])
+    groups = list(item.get("groups") or [])  # ty:ignore[invalid-argument-type]
     if group_id not in groups:
         groups.append(group_id)
     item["groups"] = groups
