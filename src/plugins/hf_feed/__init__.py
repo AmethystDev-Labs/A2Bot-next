@@ -28,6 +28,7 @@ from .client import (
     ActivityEvent,
     HFFeedClient,
     HFFeedError,
+    parse_time,
 )
 from . import store
 
@@ -106,10 +107,36 @@ async def _notify_groups(group_ids: list[int], text: str) -> None:
             logger.warning(f"hf_feed notify group {group_id} failed: {exc}")
 
 
-async def _bootstrap_seen(name: str, kind: str | None) -> tuple[str, list[str], list[ActivityEvent]]:
+def _latest_time(activities: list[ActivityEvent]) -> str | None:
+    best: datetime | None = None
+    best_raw: str | None = None
+    for event in activities:
+        dt = parse_time(event.time)
+        if dt is None:
+            continue
+        if best is None or dt > best:
+            best = dt
+            best_raw = event.time
+    return best_raw
+
+
+def _is_after_watermark(event: ActivityEvent, watermark: str | None) -> bool:
+    if not watermark:
+        return True
+    event_dt = parse_time(event.time)
+    water_dt = parse_time(watermark)
+    if event_dt is None or water_dt is None:
+        return True
+    return event_dt > water_dt
+
+
+async def _bootstrap_seen(
+    name: str, kind: str | None
+) -> tuple[str, list[str], str | None, list[ActivityEvent]]:
     snap = await feed_client.resolve_and_fetch(name, kind)
     seen = [event.event_key for event in snap.activities]
-    return snap.kind, seen, snap.activities
+    watermark = _latest_time(snap.activities)
+    return snap.kind, seen, watermark, snap.activities
 
 
 async def poll_once(force: bool = False) -> dict[str, int]:
@@ -129,32 +156,45 @@ async def poll_once(force: bool = False) -> dict[str, int]:
             allow = set(item.get("types") or DEFAULT_TYPES)
             seen = list(item.get("seen") or [])
             seen_set = set(seen)
+            watermark = item.get("watermark")
+            bootstrapped = bool(item.get("bootstrapped")) or bool(seen) or bool(watermark)
             groups = list(item.get("groups") or [])
             try:
                 snap = await feed_client.resolve_and_fetch(
                     name, kind if kind in ("org", "user") else None
                 )
                 current_keys = [event.event_key for event in snap.activities]
+                latest = _latest_time(snap.activities)
 
-                # 无基线：只记 seen，不推送任何已有动态（含启动前历史）
-                if not seen:
+                # 无基线：只记 seen + watermark，绝不推历史
+                if not bootstrapped:
                     store.update_watch(
                         name,
                         kind=snap.kind,
                         seen=current_keys[:500],
+                        watermark=latest,
                         last_check=datetime.now(timezone.utc).isoformat(),
                         last_error=None,
                         last_new=0,
                         bootstrapped=True,
                     )
-                    logger.info(f"hf_feed bootstrap {name}: {len(current_keys)} events, no notify")
+                    logger.info(
+                        f"hf_feed bootstrap {name}: {len(current_keys)} events, no notify"
+                    )
                     await asyncio.sleep(1.0)
                     continue
+
+                # 旧数据只有 seen、没有 watermark 时，用当前最新时间补水位，避免回放
+                if not watermark:
+                    watermark = latest
+                    store.update_watch(name, watermark=watermark, bootstrapped=True)
 
                 fresh = [
                     event
                     for event in snap.activities
-                    if event.event_key not in seen_set and event.type in allow
+                    if event.event_key not in seen_set
+                    and event.type in allow
+                    and _is_after_watermark(event, watermark)
                 ]
                 # activities are newest-first; notify oldest-new first
                 fresh.reverse()
@@ -166,10 +206,27 @@ async def poll_once(force: bool = False) -> dict[str, int]:
                 for event_key in current_keys + seen:
                     if event_key not in merged:
                         merged.append(event_key)
+
+                new_watermark = watermark
+                if fresh:
+                    fresh_latest = _latest_time(fresh)
+                    if fresh_latest and (
+                        not new_watermark
+                        or (
+                            parse_time(fresh_latest)
+                            and parse_time(new_watermark)
+                            and parse_time(fresh_latest) > parse_time(new_watermark)
+                        )
+                    ):
+                        new_watermark = fresh_latest
+                elif latest and not new_watermark:
+                    new_watermark = latest
+
                 store.update_watch(
                     name,
                     kind=snap.kind,
                     seen=merged[:500],
+                    watermark=new_watermark,
                     last_check=datetime.now(timezone.utc).isoformat(),
                     last_error=None,
                     last_new=len(fresh),
@@ -251,7 +308,7 @@ async def handle_add(event: GroupMessageEvent, args: Message = CommandArg()):
         await cmd_add.finish(f"已添加 {existing.get('name') or name}")
 
     try:
-        kind, seen, _activities = await _bootstrap_seen(name, kind_arg)
+        kind, seen, watermark, _activities = await _bootstrap_seen(name, kind_arg)
     except HFFeedError as exc:
         await cmd_add.finish(f"失败：{exc}")
     except Exception as exc:  # noqa: BLE001
@@ -264,7 +321,11 @@ async def handle_add(event: GroupMessageEvent, args: Message = CommandArg()):
         types=types,
         seen=seen,
     )
-    store.update_watch(name, bootstrapped=True)
+    store.update_watch(
+        name,
+        watermark=watermark,
+        bootstrapped=True,
+    )
     await cmd_add.finish(f"已添加 {name}")
 
 

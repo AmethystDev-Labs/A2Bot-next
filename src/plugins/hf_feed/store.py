@@ -83,6 +83,7 @@ def add_watch(
         "types": list(types or DEFAULT_TYPES),
         "groups": [],
         "seen": [],
+        "watermark": None,
         "bootstrapped": False,
         "last_check": None,
         "last_error": None,
@@ -98,6 +99,8 @@ def add_watch(
     item["groups"] = groups
     if seen is not None:
         item["seen"] = list(seen)[-_SEEN_LIMIT:]
+        item["bootstrapped"] = True
+    item.setdefault("watermark", None)
     watches[key] = item
     save(data)
     return item

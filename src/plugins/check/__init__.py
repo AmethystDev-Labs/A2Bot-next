@@ -31,8 +31,8 @@ pending: Dict[Tuple[int, int], dict] = {}
 
 def gen_question():
     """生成一道简单的加减法题目"""
-    a = random.randint(-100, 100)
-    b = random.randint(-100, 100)
+    a = random.randint(0, 100)
+    b = random.randint(0, 100)
     op = random.randint(0, 1)
     if op == 0:
         return a, b, "+", a + b

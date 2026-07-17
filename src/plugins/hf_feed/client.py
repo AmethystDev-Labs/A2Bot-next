@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -85,22 +87,72 @@ def _parse_props(html_text: str, kind: str) -> dict[str, Any]:
         raise HFFeedError(f"invalid {kind} activity json: {exc}") from exc
 
 
+def parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _event_key(item: dict[str, Any], account: str) -> str:
+    # 优先稳定字段；publish/update 通常没有 eventId
     if event_id := item.get("eventId"):
-        return str(event_id)
-    parts = [
-        str(item.get("type") or ""),
-        str(item.get("time") or ""),
-        str(item.get("repoId") or ""),
-        str(item.get("user") or ""),
-        account,
-    ]
-    if discussion := item.get("discussionData") or {}:
-        parts.append(str(discussion.get("num") or ""))
-        parts.append(str(discussion.get("title") or ""))
+        return f"id:{event_id}"
+
+    raw_type = str(item.get("type") or "unknown")
+    if raw_type == "discussion":
+        discussion = item.get("discussionData") or {}
+        if discussion.get("isPullRequest"):
+            raw_type = "pr"
+        repo = discussion.get("repo") or {}
+        repo_name = repo.get("name") or item.get("repoId") or ""
+        num = discussion.get("num")
+        if repo_name and num is not None:
+            return f"{raw_type}:{repo_name}:{num}"
+
     if collection := item.get("collection") or {}:
-        parts.append(str(collection.get("id") or collection.get("slug") or ""))
-    return "|".join(parts)
+        cid = collection.get("id") or collection.get("slug")
+        if cid:
+            return f"collection:{cid}"
+
+    if paper := item.get("paper") or item.get("paperData") or {}:
+        if isinstance(paper, dict):
+            pid = paper.get("id") or paper.get("title")
+            if pid:
+                return f"paper:{pid}"
+
+    repo_id = item.get("repoId") or ""
+    if raw_type in ("publish", "update") and repo_id:
+        # 同一 repo 的 update 用 lastModified/time 区分
+        stamp = item.get("time") or ""
+        repo_data = item.get("repoData") or {}
+        if isinstance(repo_data, dict) and repo_data.get("lastModified"):
+            stamp = str(repo_data.get("lastModified"))
+        return f"{raw_type}:{repo_id}:{stamp}"
+
+    digest = hashlib.sha1(
+        json.dumps(
+            {
+                "t": item.get("type"),
+                "time": item.get("time"),
+                "repo": item.get("repoId"),
+                "user": item.get("user"),
+                "title": _event_title(item),
+                "account": account,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"h:{digest}"
 
 
 def _event_title(item: dict[str, Any]) -> str | None:
